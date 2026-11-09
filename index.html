@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>影の回廊</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tone.js for Audio -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            color: #fff;
+            font-family: 'Mincho', serif;
+            touch-action: none; /* Prevent scroll on touch */
+        }
+        
+        #gameCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* CRTノイズエフェクト */
+        .crt::before {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 2;
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(0, 0, 0, 0.85);
+            z-index: 10;
+            transition: opacity 0.5s;
+        }
+
+        .hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .glitch {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #ff0000;
+            text-shadow: 2px 2px 0px #000;
+            animation: glitch 1s linear infinite;
+        }
+
+        @keyframes glitch {
+            2%, 64% { transform: translate(2px,0) skew(0deg); }
+            4%, 60% { transform: translate(-2px,0) skew(0deg); }
+            62% { transform: translate(0,0) skew(5deg); }
+        }
+
+        /* Mobile Controls */
+        #mobileControls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: grid;
+            grid-template-columns: repeat(3, 60px);
+            grid-template-rows: repeat(2, 60px);
+            gap: 10px;
+            z-index: 5;
+            opacity: 0.5;
+        }
+        
+        @media (min-width: 768px) {
+            #mobileControls {
+                display: none; /* Hide on PC */
+            }
+        }
+
+        .d-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            color: white;
+            font-size: 24px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            user-select: none;
+            cursor: pointer;
+        }
+        .d-btn:active {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        #btn-up { grid-column: 2; grid-row: 1; }
+        #btn-left { grid-column: 1; grid-row: 2; }
+        #btn-down { grid-column: 2; grid-row: 2; }
+        #btn-right { grid-column: 3; grid-row: 2; }
+
+    </style>
+</head>
+<body class="crt">
+
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- UI Overlays -->
+    <div id="startScreen" class="overlay">
+        <h1 class="text-4xl md:text-6xl tracking-widest mb-8 text-red-600 font-serif drop-shadow-[0_0_10px_rgba(220,38,38,0.8)]">影の回廊</h1>
+        <p class="text-gray-300 mb-8 text-center px-4 max-w-md">
+            暗闇の中を探索し、迫りくる「影」から逃げながら<br>
+            <span class="text-yellow-300 drop-shadow-[0_0_5px_#fde047]">3つの光の欠片</span> を集めて脱出せよ。<br><br>
+            操作: WASD または 矢印キー<br>
+            (スマートフォンは画面のボタン)
+        </p>
+        <button id="startBtn" class="px-8 py-3 bg-red-900 text-white hover:bg-red-700 border border-red-500 rounded transition-colors text-xl tracking-widest shadow-[0_0_15px_rgba(220,38,38,0.4)]">探索を開始する</button>
+        <p class="mt-4 text-xs text-gray-500">※音が出ます</p>
+    </div>
+
+    <div id="gameOverScreen" class="overlay hidden bg-black">
+        <h1 class="glitch mb-8">捕まった</h1>
+        <button id="retryBtn" class="px-8 py-3 bg-red-900 text-white hover:bg-red-700 border border-red-500 rounded transition-colors text-lg tracking-widest mt-12 opacity-0 transition-opacity duration-1000" style="transition-delay: 2s;">もう一度</button>
+    </div>
+
+    <div id="clearScreen" class="overlay hidden bg-black/90">
+        <h1 class="text-5xl text-yellow-100 font-serif mb-8 tracking-[0.2em] drop-shadow-[0_0_15px_#fef08a]">生還</h1>
+        <p class="text-gray-300 mb-8">光が集まり、影は退いた。</p>
+        <button id="restartBtn" class="px-8 py-3 border border-gray-500 text-gray-300 hover:bg-gray-800 rounded transition-colors text-lg tracking-widest">再び挑む</button>
+    </div>
+
+    <!-- HUD -->
+    <div class="absolute top-4 left-4 z-[5] text-xl font-serif text-gray-300 drop-shadow-[0_0_5px_rgba(255,255,255,0.5)]">
+        光の欠片: <span id="scoreText" class="text-yellow-300">0 / 3</span>
+    </div>
+
+    <!-- Mobile Controls -->
+    <div id="mobileControls">
+        <div id="btn-up" class="d-btn">▲</div>
+        <div id="btn-left" class="d-btn">◀</div>
+        <div id="btn-down" class="d-btn">▼</div>
+        <div id="btn-right" class="d-btn">▶</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        let screenWidth, screenHeight;
+        const TILE_SIZE = 40;
+        
+        // --- Audio Setup (Tone.js) ---
+        let bgmDrone, heartbeat, scareSound, collectSound;
+        let isAudioInitialized = false;
+
+        async function initAudio() {
+            if (isAudioInitialized) return;
+            await Tone.start();
+            
+            // 不気味な環境音
+            bgmDrone = new Tone.Oscillator({
+                frequency: 55, // Low A
+                type: "sawtooth",
+                volume: -20
+            }).toDestination();
+            
+            const lfo = new Tone.LFO(0.5, -25, -15).start();
+            lfo.connect(bgmDrone.volume);
+
+            // 心音
+            heartbeat = new Tone.MembraneSynth({
+                pitchDecay: 0.05,
+                octaves: 4,
+                oscillator: { type: "sine" },
+                envelope: { attack: 0.01, decay: 0.4, sustain: 0.01, release: 0.4 },
+                volume: -5
+            }).toDestination();
+
+            // 収集音
+            collectSound = new Tone.FMSynth({
+                modulationIndex: 12.22,
+                envelope: { attack: 0.01, decay: 0.2 },
+                modulation: { type: "square" },
+                modulationEnvelope: { attack: 0.01, decay: 0.1 },
+                volume: -10
+            }).toDestination();
+
+            // ゲームオーバー音
+            scareSound = new Tone.NoiseSynth({
+                noise: { type: "white" },
+                envelope: { attack: 0.01, decay: 2, sustain: 0, release: 1 },
+                volume: 5
+            }).toDestination();
+
+            isAudioInitialized = true;
+        }
+
+        function playHeartbeat(speedMult = 1) {
+            if(gameState !== 'playing') return;
+            heartbeat.triggerAttackRelease("C1", "8n");
+            setTimeout(() => {
+                if(gameState === 'playing') heartbeat.triggerAttackRelease("C1", "8n");
+            }, 200 / speedMult);
+        }
+
+        // --- Game Variables ---
+        let gameState = 'menu'; // menu, playing, gameover, clear
+        let lastTime = 0;
+        let heartbeatTimer = 0;
+        
+        let collectedItems = 0;
+        const TOTAL_ITEMS = 3;
+
+        // Map (1: wall, 0: floor) - 15x15
+        const MAP_DATA = [
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+            [1,0,0,0,1,0,0,0,0,0,1,0,0,0,1],
+            [1,0,1,0,1,0,1,1,1,0,1,0,1,0,1],
+            [1,0,1,0,0,0,0,0,1,0,0,0,1,0,1],
+            [1,0,1,1,1,1,1,0,1,1,1,0,1,0,1],
+            [1,0,0,0,0,0,1,0,0,0,1,0,0,0,1],
+            [1,1,1,1,1,0,1,1,1,0,1,1,1,1,1],
+            [1,0,0,0,1,0,0,0,1,0,0,0,0,0,1],
+            [1,0,1,0,1,1,1,0,1,1,1,1,1,0,1],
+            [1,0,1,0,0,0,0,0,0,0,0,0,1,0,1],
+            [1,0,1,1,1,1,1,1,1,1,1,0,1,0,1],
+            [1,0,0,0,0,0,0,0,1,0,0,0,1,0,1],
+            [1,0,1,1,1,1,1,0,1,0,1,1,1,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+        ];
+        const MAP_COLS = 15;
+        const MAP_ROWS = 15;
+
+        // Entities
+        let player = { x: 1, y: 1, targetX: 1, targetY: 1, moving: false };
+        let enemy = { x: 13, y: 13, targetX: 13, targetY: 13, moving: false, moveDelay: 0, speed: 400 }; // speed is ms per move
+        let items = [];
+
+        // Input
+        const keys = { w: false, a: false, s: false, d: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            screenWidth = canvas.width;
+            screenHeight = canvas.height;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- Core Logic ---
+
+        function initGame() {
+            player.x = 1; player.y = 1;
+            player.targetX = 1; player.targetY = 1;
+            player.moving = false;
+
+            enemy.x = 13; enemy.y = 13;
+            enemy.targetX = 13; enemy.targetY = 13;
+            enemy.moving = false;
+            enemy.moveDelay = 0;
+            enemy.speed = 400; // 初期速度
+
+            collectedItems = 0;
+            updateScoreUI();
+
+            // 欠片を配置 (固定の空きスペース)
+            items = [
+                { x: 13, y: 1, active: true },
+                { x: 1, y: 13, active: true },
+                { x: 9, y: 7, active: true }
+            ];
+
+            gameState = 'playing';
+            
+            if(bgmDrone && bgmDrone.state !== "started") bgmDrone.start();
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        function canMove(x, y) {
+            if (x < 0 || y < 0 || x >= MAP_COLS || y >= MAP_ROWS) return false;
+            return MAP_DATA[y][x] === 0;
+        }
+
+        function updatePlayer() {
+            if (player.moving) {
+                // 滑らかな移動 (簡略化のためグリッド単位で瞬間移動させて視覚的には補間する手もあるが、
+                // 今回はレトロなマス目移動にする)
+                player.x = player.targetX;
+                player.y = player.targetY;
+                player.moving = false;
+            }
+
+            if (!player.moving) {
+                let dx = 0, dy = 0;
+                if (keys.w || keys.ArrowUp) dy = -1;
+                else if (keys.s || keys.ArrowDown) dy = 1;
+                else if (keys.a || keys.ArrowLeft) dx = -1;
+                else if (keys.d || keys.ArrowRight) dx = 1;
+
+                if (dx !== 0 || dy !== 0) {
+                    if (canMove(player.x + dx, player.y + dy)) {
+                        player.targetX = player.x + dx;
+                        player.targetY = player.y + dy;
+                        player.moving = true;
+                    }
+                }
+            }
+
+            // アイテム収集判定
+            items.forEach(item => {
+                if (item.active && player.x === item.x && player.y === item.y) {
+                    item.active = false;
+                    collectedItems++;
+                    updateScoreUI();
+                    if(collectSound) collectSound.triggerAttackRelease("E5", "16n");
+                    
+                    // 敵がスピードアップ
+                    enemy.speed = Math.max(150, enemy.speed - 100);
+
+                    if (collectedItems >= TOTAL_ITEMS) {
+                        gameClear();
+                    }
+                }
+            });
+        }
+
+        function updateEnemy(dt) {
+            if (gameState !== 'playing') return;
+
+            enemy.moveDelay -= dt;
+            if (enemy.moveDelay <= 0) {
+                // シンプルな追跡AI
+                let dx = 0;
+                let dy = 0;
+
+                // プレイヤーとの距離
+                let distX = player.x - enemy.x;
+                let distY = player.y - enemy.y;
+
+                if (Math.abs(distX) > Math.abs(distY)) {
+                    dx = Math.sign(distX);
+                    if (!canMove(enemy.x + dx, enemy.y)) {
+                        dx = 0;
+                        dy = Math.sign(distY) || (Math.random() > 0.5 ? 1 : -1); // 迂回
+                    }
+                } else {
+                    dy = Math.sign(distY);
+                    if (!canMove(enemy.x, enemy.y + dy)) {
+                        dy = 0;
+                        dx = Math.sign(distX) || (Math.random() > 0.5 ? 1 : -1);
+                    }
+                }
+
+                // ランダムな徘徊要素も少し入れる (スタック防止)
+                if (Math.random() < 0.2 || (dx === 0 && dy === 0)) {
+                    const dirs = [[0,-1], [0,1], [-1,0], [1,0]];
+                    const validDirs = dirs.filter(d => canMove(enemy.x + d[0], enemy.y + d[1]));
+                    if (validDirs.length > 0) {
+                        const randomDir = validDirs[Math.floor(Math.random() * validDirs.length)];
+                        dx = randomDir[0];
+                        dy = randomDir[1];
+                    }
+                }
+
+                if (canMove(enemy.x + dx, enemy.y + dy)) {
+                    enemy.x += dx;
+                    enemy.y += dy;
+                }
+                
+                enemy.moveDelay = enemy.speed;
+            }
+
+            // 当たり判定
+            if (player.x === enemy.x && player.y === enemy.y) {
+                gameOver();
+            }
+        }
+
+        function updateScoreUI() {
+            document.getElementById('scoreText').innerText = `${collectedItems} / ${TOTAL_ITEMS}`;
+        }
+
+        function gameOver() {
+            gameState = 'gameover';
+            if(bgmDrone) bgmDrone.stop();
+            if(scareSound) scareSound.triggerAttackRelease();
+            
+            document.getElementById('gameOverScreen').classList.remove('hidden');
+            setTimeout(() => {
+                document.getElementById('retryBtn').style.opacity = '1';
+                document.getElementById('retryBtn').style.pointerEvents = 'auto';
+            }, 2000);
+        }
+
+        function gameClear() {
+            gameState = 'clear';
+            if(bgmDrone) bgmDrone.stop();
+            document.getElementById('clearScreen').classList.remove('hidden');
+        }
+
+        function draw() {
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // カメラのオフセット（プレイヤーを中央に）
+            const offsetX = canvas.width / 2 - (player.x * TILE_SIZE + TILE_SIZE / 2);
+            const offsetY = canvas.height / 2 - (player.y * TILE_SIZE + TILE_SIZE / 2);
+
+            ctx.save();
+            ctx.translate(offsetX, offsetY);
+
+            // マップ描画
+            for (let y = 0; y < MAP_ROWS; y++) {
+                for (let x = 0; x < MAP_COLS; x++) {
+                    if (MAP_DATA[y][x] === 1) {
+                        // 壁
+                        ctx.fillStyle = '#111';
+                        ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE + 1, TILE_SIZE + 1);
+                        ctx.strokeStyle = '#222';
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                    } else {
+                        // 床
+                        ctx.fillStyle = '#050505';
+                        ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                    }
+                }
+            }
+
+            // アイテム描画
+            const time = Date.now();
+            items.forEach(item => {
+                if (item.active) {
+                    ctx.fillStyle = `rgba(253, 224, 71, ${0.5 + Math.sin(time / 200) * 0.5})`; // 点滅効果
+                    ctx.beginPath();
+                    ctx.arc(item.x * TILE_SIZE + TILE_SIZE / 2, item.y * TILE_SIZE + TILE_SIZE / 2, TILE_SIZE / 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    // グロウ効果
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = '#fde047';
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                }
+            });
+
+            // 敵描画
+            ctx.fillStyle = '#990000';
+            ctx.fillRect(enemy.x * TILE_SIZE + 5, enemy.y * TILE_SIZE + 5, TILE_SIZE - 10, TILE_SIZE - 10);
+            // 敵の目
+            ctx.fillStyle = '#ff0000';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#ff0000';
+            ctx.fillRect(enemy.x * TILE_SIZE + 10, enemy.y * TILE_SIZE + 10, 5, 5);
+            ctx.fillRect(enemy.x * TILE_SIZE + TILE_SIZE - 15, enemy.y * TILE_SIZE + 10, 5, 5);
+            ctx.shadowBlur = 0;
+
+            // プレイヤー描画
+            ctx.fillStyle = '#dddddd';
+            ctx.beginPath();
+            ctx.arc(player.x * TILE_SIZE + TILE_SIZE / 2, player.y * TILE_SIZE + TILE_SIZE / 2, TILE_SIZE / 3, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+
+            // --- 視界（フラッシュライト効果） ---
+            // 全体を黒く塗りつぶし、プレイヤーの周囲だけ切り抜く
+            ctx.globalCompositeOperation = 'source-over';
+            
+            // 距離に基づく鼓動の速さの計算
+            let distToEnemy = Math.abs(player.x - enemy.x) + Math.abs(player.y - enemy.y);
+            let heartbeatIntensity = Math.max(0, 15 - distToEnemy) / 15; // 0 to 1
+            
+            // 視界の揺らぎ
+            let visionRadius = 150 + Math.sin(time / 500) * 10 - (heartbeatIntensity * 30);
+            
+            // グラデーションの作成（黒枠）
+            let gradient = ctx.createRadialGradient(
+                canvas.width / 2, canvas.height / 2, 0,
+                canvas.width / 2, canvas.height / 2, visionRadius * 1.5
+            );
+            gradient.addColorStop(0, 'rgba(0, 0, 0, 0)'); // 中心は透明
+            gradient.addColorStop(0.5, 'rgba(0, 0, 0, 0.8)'); // 徐々に暗く
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 1)'); // 外側は真っ黒
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 画面周囲に赤いヴィネット（敵が近い時）
+            if (heartbeatIntensity > 0.2) {
+                let redGrad = ctx.createRadialGradient(
+                    canvas.width/2, canvas.height/2, canvas.width/4,
+                    canvas.width/2, canvas.height/2, canvas.width
+                );
+                redGrad.addColorStop(0, 'rgba(255, 0, 0, 0)');
+                redGrad.addColorStop(1, `rgba(150, 0, 0, ${heartbeatIntensity * 0.5})`);
+                ctx.fillStyle = redGrad;
+                ctx.fillRect(0,0, canvas.width, canvas.height);
+            }
+        }
+
+        function gameLoop(timestamp) {
+            if (gameState !== 'playing') return;
+
+            let dt = timestamp - lastTime;
+            lastTime = timestamp;
+            
+            // Limit dt to prevent huge jumps if tab was inactive
+            if(dt > 100) dt = 16; 
+
+            updatePlayer();
+            updateEnemy(dt);
+            draw();
+
+            // 心音の制御
+            heartbeatTimer -= dt;
+            if(heartbeatTimer <= 0 && isAudioInitialized) {
+                let distToEnemy = Math.abs(player.x - enemy.x) + Math.abs(player.y - enemy.y);
+                let speedMult = 1 + Math.max(0, (10 - distToEnemy) / 5);
+                playHeartbeat(speedMult);
+                heartbeatTimer = 1000 / speedMult; // 次の鼓動までの時間
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- Event Listeners ---
+
+        document.getElementById('startBtn').addEventListener('click', async () => {
+            await initAudio();
+            document.getElementById('startScreen').classList.add('hidden');
+            lastTime = performance.now();
+            initGame();
+        });
+
+        document.getElementById('retryBtn').addEventListener('click', () => {
+            document.getElementById('gameOverScreen').classList.add('hidden');
+            document.getElementById('retryBtn').style.opacity = '0';
+            document.getElementById('retryBtn').style.pointerEvents = 'none';
+            lastTime = performance.now();
+            initGame();
+        });
+
+        document.getElementById('restartBtn').addEventListener('click', () => {
+            document.getElementById('clearScreen').classList.add('hidden');
+            lastTime = performance.now();
+            initGame();
+        });
+
+        // Keyboard inputs
+        window.addEventListener('keydown', (e) => {
+            if (keys.hasOwnProperty(e.key)) keys[e.key] = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            if (keys.hasOwnProperty(e.key)) keys[e.key] = false;
+        });
+
+        // Touch controls setup
+        const touchBtns = {
+            'btn-up': 'ArrowUp',
+            'btn-down': 'ArrowDown',
+            'btn-left': 'ArrowLeft',
+            'btn-right': 'ArrowRight'
+        };
+
+        for (let btnId in touchBtns) {
+            const el = document.getElementById(btnId);
+            const keyName = touchBtns[btnId];
+            
+            el.addEventListener('touchstart', (e) => {
+                e.preventDefault(); // Prevent double firing
+                keys[keyName] = true;
+            });
+            el.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                keys[keyName] = false;
+            });
+            // 念のためマウスイベントもバインド
+            el.addEventListener('mousedown', () => keys[keyName] = true);
+            el.addEventListener('mouseup', () => keys[keyName] = false);
+            el.addEventListener('mouseleave', () => keys[keyName] = false);
+        }
+
+        // 初回描画（メニュー背景用）
+        draw();
+
+    </script>
+</body>
+</html>
