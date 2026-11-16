@@ -221,6 +221,8 @@
         let gameState = 'menu'; // menu, playing, gameover, clear
         let lastTime = 0;
         let heartbeatTimer = 0;
+        const PLAYER_MOVE_INTERVAL = 1000 / 60;
+        let playerMoveTimer = 0;
         
         let collectedItems = 0;
         const TOTAL_ITEMS = 3;
@@ -270,6 +272,8 @@
             player.targetX = 1; player.targetY = 1;
             player.moving = false;
 
+            playerMoveTimer = 0;
+
             enemy.x = 13; enemy.y = 13;
             enemy.targetX = 13; enemy.targetY = 13;
             enemy.moving = false;
@@ -298,7 +302,19 @@
             return MAP_DATA[y][x] === 0;
         }
 
-        function updatePlayer() {
+        function updatePlayer(dt) {
+            playerMoveTimer += dt;
+            // 60fps時の移動ペースを、描画頻度によらず保つ。
+            while (playerMoveTimer >= PLAYER_MOVE_INTERVAL && gameState === 'playing') {
+                playerMoveTimer -= PLAYER_MOVE_INTERVAL;
+                stepPlayer();
+                if (gameState === 'playing' && player.x === enemy.x && player.y === enemy.y) {
+                    gameOver();
+                }
+            }
+        }
+
+        function stepPlayer() {
             if (player.moving) {
                 // 滑らかな移動 (簡略化のためグリッド単位で瞬間移動させて視覚的には補間する手もあるが、
                 // 今回はレトロなマス目移動にする)
@@ -524,7 +540,7 @@
             // Limit dt to prevent huge jumps if tab was inactive
             if(dt > 100) dt = 16; 
 
-            updatePlayer();
+            updatePlayer(dt);
             updateEnemy(dt);
             draw();
 
